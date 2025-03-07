@@ -1,0 +1,61 @@
+#!/bin/sh
+set -e
+
+echo "Actualizando el sistema..."
+apk update && apk upgrade
+
+echo "Instalando paquetes esenciales..."
+apk add git openssh openbox tint2 tor iptables xorg-server xinit wget tar flatpak
+
+echo "Configurando Openbox y Tint2..."
+mkdir -p ~/.config/openbox
+mkdir -p ~/.config/tint2
+
+cat <<EOF > ~/.config/openbox/autostart
+#!/bin/sh
+tint2 &
+EOF
+
+chmod +x ~/.config/openbox/autostart
+
+echo "Configurando SSH para autenticación por contraseña..."
+sed -i 's/^#PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
+rc-service sshd restart
+rc-update add sshd
+
+echo "Configurando iptables para enrutar tráfico a través de Tor..."
+iptables -F
+iptables -X
+iptables -t nat -F
+iptables -t nat -X
+iptables -t mangle -F
+iptables -t mangle -X
+
+iptables -P INPUT DROP
+iptables -P FORWARD DROP
+iptables -P OUTPUT ACCEPT
+
+iptables -A INPUT -i lo -j ACCEPT
+iptables -A INPUT -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+iptables -A INPUT -p tcp --dport 22 -j ACCEPT
+
+iptables -t nat -A OUTPUT -m owner --uid-owner tor -j RETURN
+iptables -t nat -A OUTPUT -p tcp --syn -j REDIRECT --to-ports 9040
+iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+
+rc-service iptables save
+rc-update add iptables
+
+echo "Habilitando el inicio de Tor..."
+rc-service tor start
+rc-update add tor
+
+echo "Instalando y configurando Tor Browser con Flatpak..."
+flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+flatpak install -y flathub com.torproject.torbrowser
+
+echo "Configurando inicio gráfico..."
+echo "exec openbox-session" > ~/.xinitrc
+
+echo "Instalación y configuración completadas. Reinicia el sistema para aplicar los cambios."
+
